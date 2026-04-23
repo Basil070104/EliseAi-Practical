@@ -47,3 +47,11 @@ export interface EnrichedLead extends LeadInput {
   scoreTier: ScoreTier | null;
   error: string | null;
 }
+
+export interface HistoryEntry {
+  id: string;
+  sessionId: string;
+  timestamp: number;
+  label: string; // e.g. "Jane Smith" or "3 leads via CSV"
+  leads: EnrichedLead[];
+}

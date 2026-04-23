@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Use class-based dark mode so a toggle button can control it */
+@variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -13,10 +16,15 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --background: #0a0a0a;
     --foreground: #ededed;
   }
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 body {
