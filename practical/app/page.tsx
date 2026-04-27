@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion, animate } from "framer-motion";
 import Papa from "papaparse";
 import type { EnrichedLead, HistoryEntry, LeadInput, ScoreTier } from "@/lib/types";
@@ -337,8 +337,14 @@ function LoadingRow({ lead, position }: { lead: LeadInput; position: number }) {
 // ---------------------------------------------------------------------------
 
 export default function Home() {
-  const [tab, setTab] = useState<"manual" | "csv">("manual");
+  const [tab, setTab] = useState<"manual" | "csv" | "console">("manual");
   const [form, setForm] = useState<LeadInput>(EMPTY_FORM);
+  const [consoleInput, setConsoleInput] = useState("");
+  const [consoleParsing, setConsoleParsing] = useState(false);
+  const [consoleError, setConsoleError] = useState("");
+  const [consoleRows, setConsoleRows] = useState<(LeadInput & { id: string; source: "manual" | "csv" | "console"; enriched?: EnrichedLead })[]>([]);
+  const [expandedConsoleId, setExpandedConsoleId] = useState<string | null>(null);
+  const consoleRef = useRef<HTMLTextAreaElement>(null);
   const [csvLeads, setCsvLeads] = useState<LeadInput[]>([]);
   const [csvFileName, setCsvFileName] = useState<string>("");
   const [results, setResults] = useState<EnrichedLead[]>([]);
@@ -403,32 +409,100 @@ export default function Home() {
     const label = enriched.name || form.name || "Manual entry";
     const entry = saveHistoryEntry(sessionId, [enriched], label);
     setHistory((prev) => [entry, ...prev]);
+    // Mirror into console
+    const rowId = `manual-${Date.now()}`;
+    setConsoleRows((prev) => [...prev, { ...form, id: rowId, source: "manual", enriched }]);
   }
 
   async function handleEnrichAll() {
     setResults([]);
     setExpandedIndex(null);
+    const allResults: EnrichedLead[] = [];
     // Enrich sequentially to respect WalkScore rate limits (500ms gap per spec)
     for (let i = 0; i < csvLeads.length; i++) {
       setPendingLead({ lead: csvLeads[i], position: i + 1 });
       const result = await enrichLead(csvLeads[i], i);
+      allResults.push(result);
       // Stream each result in as it arrives, sorted by score descending
-      setResults((prev) =>
-        [...prev, result].sort((a, b) => (b.claude?.score ?? -1) - (a.claude?.score ?? -1))
-      );
+      setResults([...allResults].sort((a, b) => (b.claude?.score ?? -1) - (a.claude?.score ?? -1)));
       if (i < csvLeads.length - 1) await new Promise((r) => setTimeout(r, 500));
     }
     setPendingLead(null);
-    // Save completed batch to history once all leads are done
-    setResults((final) => {
-      const label =
-        final.length === 1
-          ? final[0].name || "1 lead"
-          : `${final.length} leads via CSV`;
-      const entry = saveHistoryEntry(sessionId, final, label);
-      setHistory((prev) => [entry, ...prev]);
-      return final;
-    });
+    // Save to history
+    const label =
+      allResults.length === 1
+        ? allResults[0].name || "1 lead"
+        : `${allResults.length} leads via CSV`;
+    const entry = saveHistoryEntry(sessionId, allResults, label);
+    setHistory((prev) => [entry, ...prev]);
+    // Mirror into console (once, outside any state updater)
+    const newRows = allResults.map((enriched) => ({
+      ...enriched,
+      id: `csv-${Date.now()}-${Math.random()}`,
+      source: "csv" as const,
+      enriched,
+    }));
+    setConsoleRows((prev) => [...prev, ...newRows]);
+  }
+
+  // ---- Console (spreadsheet) helpers ----
+
+  function consoleAddBlankRow() {
+    setConsoleRows((prev) => [
+      ...prev,
+      { id: `${Date.now()}-${Math.random()}`, name: "", email: "", company: "", address: "", city: "", state: "", source: "console" },
+    ]);
+  }
+
+  function consoleUpdateRow(id: string, field: keyof LeadInput, value: string) {
+    setConsoleRows((prev) => prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  }
+
+  function consoleDeleteRow(id: string) {
+    setConsoleRows((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  async function handleConsoleParse() {
+    if (!consoleInput.trim()) return;
+    setConsoleParsing(true);
+    setConsoleError("");
+    try {
+      const res = await fetch("/api/parse-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: consoleInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Parse failed");
+      const newRow = { ...(data as LeadInput), id: `${Date.now()}-${Math.random()}`, source: "console" as const };
+      setConsoleRows((prev) => [...prev, newRow]);
+      setConsoleInput("");
+    } catch (err) {
+      setConsoleError(err instanceof Error ? err.message : "Parse failed");
+    } finally {
+      setConsoleParsing(false);
+    }
+  }
+
+  async function handleConsoleEnrichAll() {
+    if (consoleRows.length === 0) return;
+    setResults([]);
+    setExpandedIndex(null);
+    const enriched: EnrichedLead[] = [];
+    for (let i = 0; i < consoleRows.length; i++) {
+      const row = consoleRows[i];
+      setPendingLead({ lead: row, position: i + 1 });
+      const result = await enrichLead(row, i);
+      enriched.push(result);
+      setResults([...enriched].sort((a, b) => (b.claude?.score ?? -1) - (a.claude?.score ?? -1)));
+      // Store enriched result back on the row
+      setConsoleRows((prev) => prev.map((r) => r.id === row.id ? { ...r, enriched: result } : r));
+      if (i < consoleRows.length - 1) await new Promise((r) => setTimeout(r, 500));
+    }
+    setPendingLead(null);
+    const label = enriched.length === 1 ? enriched[0].name || "1 lead" : `${enriched.length} leads via Console`;
+    const entry = saveHistoryEntry(sessionId, enriched, label);
+    setHistory((prev) => [entry, ...prev]);
   }
 
   // ---- CSV parsing ----
@@ -506,7 +580,7 @@ export default function Home() {
             <span className="text-xs font-semibold uppercase tracking-widest text-indigo-600 dark:text-indigo-400">
               EliseAI
             </span>
-            <h1 className="text-lg font-bold leading-tight">Inbound Lead Enrichment Tool</h1>
+            <h1 className="text-lg font-bold leading-tight">Lead Enrichment Tool</h1>
           </div>
           <div className="flex items-center gap-4 ml-auto">
             <div className="text-right hidden sm:block">
@@ -613,23 +687,170 @@ export default function Home() {
         <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-zinc-200 dark:border-zinc-800">
-            {(["manual", "csv"] as const).map((t) => (
+            {(["manual", "csv", "console"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`px-5 py-3 text-sm font-medium transition-colors ${
+                className={`px-5 py-3 text-sm font-medium transition-colors cursor-pointer ${
                   tab === t
                     ? "border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400"
                     : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                 }`}
               >
-                {t === "manual" ? "Manual Entry" : "CSV Upload"}
+                {t === "manual" ? "Manual Entry" : t === "csv" ? "CSV Upload" : "✦ Console"}
               </button>
             ))}
           </div>
 
           <div className="p-6">
-            {tab === "manual" ? (
+            {tab === "console" ? (
+              <div className="space-y-4">
+                {/* NLP input bar */}
+                <div className="flex gap-2 items-start">
+                  <div className="relative flex-1">
+                    <textarea
+                      ref={consoleRef}
+                      value={consoleInput}
+                      onChange={(e) => { setConsoleInput(e.target.value); setConsoleError(""); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleConsoleParse(); }}
+                      rows={2}
+                      placeholder={`Describe a lead in plain English — "Jane Smith at Acme Realty, jane@acmerealty.com, 123 Main St, Austin TX" — ⌘↵ to add row`}
+                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
+                    />
+                    {consoleError && <p className="mt-1 text-xs text-red-500">{consoleError}</p>}
+                  </div>
+                  <button
+                    onClick={handleConsoleParse}
+                    disabled={!consoleInput.trim() || consoleParsing}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-sm font-semibold transition-colors shrink-0"
+                  >
+                    {consoleParsing ? "Parsing…" : "+ Add Row"}
+                  </button>
+                </div>
+
+                {/* Spreadsheet table */}
+                <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="bg-zinc-100 dark:bg-zinc-800">
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700 w-6">#</th>
+                        {(["Name", "Email", "Company", "Address", "City", "State"] as const).map((h) => (
+                          <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">{h}</th>
+                        ))}
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Source</th>
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wide border-b border-zinc-200 dark:border-zinc-700">Status</th>
+                        <th className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 w-10" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {consoleRows.length === 0 && (
+                        <tr>
+                          <td colSpan={10} className="px-4 py-8 text-center text-sm text-zinc-400 italic">
+                            No rows yet — type above and click <strong>+ Add Row</strong>, enrich from Manual / CSV tabs, or click <strong>+ New Empty Row</strong>.
+                          </td>
+                        </tr>
+                      )}
+                      {consoleRows.map((row, idx) => {
+                        const isExpanded = expandedConsoleId === row.id;
+                        const sourceBadge: Record<string, string> = {
+                          manual: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300",
+                          csv:    "bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300",
+                          console:"bg-zinc-100 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-300",
+                        };
+                        return (
+                          <React.Fragment key={row.id}>
+                            <tr
+                              className={`group border-b border-zinc-100 dark:border-zinc-800 ${
+                                isExpanded ? "" : "last:border-0"
+                              } ${
+                                idx % 2 === 0 ? "bg-white dark:bg-zinc-900" : "bg-zinc-50 dark:bg-zinc-950"
+                              }`}
+                            >
+                              <td className="px-3 py-1.5 text-xs text-zinc-400 text-center">{idx + 1}</td>
+                              {(["name", "email", "company", "address", "city", "state"] as (keyof LeadInput)[]).map((field) => (
+                                <td key={field} className="px-1 py-1">
+                                  <input
+                                    type={field === "email" ? "email" : "text"}
+                                    value={row[field]}
+                                    onChange={(e) => consoleUpdateRow(row.id, field, e.target.value)}
+                                    className="w-full rounded border border-transparent hover:border-zinc-200 dark:hover:border-zinc-700 focus:border-indigo-400 dark:focus:border-indigo-500 bg-transparent focus:bg-white dark:focus:bg-zinc-800 px-2 py-1 text-sm focus:outline-none transition-colors"
+                                  />
+                                </td>
+                              ))}
+                              <td className="px-3 py-1.5 whitespace-nowrap">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium capitalize ${sourceBadge[row.source]}`}>
+                                  {row.source}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1.5 whitespace-nowrap">
+                                {row.enriched ? (
+                                  <button
+                                    onClick={() => setExpandedConsoleId(isExpanded ? null : row.id)}
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                                  >
+                                    <ScoreBadge tier={row.enriched.scoreTier} score={row.enriched.claude?.score ?? null} />
+                                    <span className="ml-1">{isExpanded ? "▲" : "▼"}</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-zinc-400 italic">Not enriched</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-1 text-center">
+                                <button
+                                  onClick={() => consoleDeleteRow(row.id)}
+                                  title="Remove row"
+                                  className="text-zinc-300 hover:text-red-500 dark:text-zinc-600 dark:hover:text-red-400 transition-colors text-base leading-none"
+                                >
+                                  ✕
+                                </button>
+                              </td>
+                            </tr>
+                            {isExpanded && row.enriched && (
+                              <tr className="border-b border-zinc-100 dark:border-zinc-800">
+                                <td colSpan={10} className="px-4 py-4 bg-zinc-50 dark:bg-zinc-900">
+                                  {row.enriched.error ? (
+                                    <p className="text-sm text-red-500">Error: {row.enriched.error}</p>
+                                  ) : (
+                                    <InsightsCard lead={row.enriched} />
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Footer actions */}
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={consoleAddBlankRow}
+                    className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
+                  >
+                    + New Empty Row
+                  </button>
+                  <div className="flex items-center gap-3">
+                    {consoleRows.length > 0 && (
+                      <button
+                        onClick={() => setConsoleRows([])}
+                        className="text-sm text-zinc-400 hover:text-red-500 transition-colors"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                    <button
+                      onClick={handleConsoleEnrichAll}
+                      disabled={isLoading || consoleRows.length === 0}
+                      className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                    >
+                      {isLoading ? `Enriching…` : `Enrich All (${consoleRows.length})`}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : tab === "manual" ? (
               <>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {(
@@ -658,19 +879,19 @@ export default function Home() {
                   <button
                     onClick={handleManualEnrich}
                     disabled={!canManualEnrich}
-                    className="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                    className="px-5 py-2.5 cursor-pointer rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
                   >
                     {isLoading ? "Enriching…" : "Enrich Lead"}
                   </button>
                   <button
                     onClick={() => { setForm(EXAMPLE_LEAD); setResults([]); setExpandedIndex(null); }}
-                    className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
+                    className="text-sm cursor-pointer text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
                   >
                     Try an example →
                   </button>
                 </div>
               </>
-            ) : (
+            ) : tab === "csv" ? (
               <>
                 <p className="text-sm text-zinc-500 mb-3">
                   Upload a CSV with headers:{" "}
@@ -741,7 +962,7 @@ export default function Home() {
                     : `Enrich All (${csvLeads.length})`}
                 </button>
               </>
-            )}
+            ) : null}
           </div>
         </section>
 
