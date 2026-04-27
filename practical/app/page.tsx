@@ -77,6 +77,87 @@ function ScoreBadge({ tier, score }: { tier: ScoreTier | null; score: number | n
   );
 }
 
+function SendEmailPanel({ defaultTo, emailBody }: { defaultTo: string; emailBody: string }) {
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState(defaultTo);
+  const [status, setStatus] = useState<"idle" | "sending" | "success" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  async function handleSend() {
+    if (!from || !to) return;
+    setStatus("sending");
+    setErrorMsg("");
+    try {
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          from,
+          to,
+          subject: "Reaching out about your property",
+          text: emailBody,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send");
+      setStatus("success");
+    } catch (err) {
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to send");
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-zinc-100 dark:border-zinc-700 pt-3">
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-xs text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
+      >
+        {open ? "Hide send form ▲" : "Send this email ▼"}
+      </button>
+
+      {open && (
+        <div className="mt-3 space-y-2">
+          <div>
+            <label className="block text-xs font-medium text-zinc-500 mb-0.5">Your email (From)</label>
+            <input
+              type="email"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              placeholder="you@yourcompany.com"
+              className="w-full text-xs rounded border border-zinc-200 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-zinc-500 mb-0.5">Recipient (To)</label>
+            <input
+              type="email"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="lead@example.com"
+              className="w-full text-xs rounded border border-zinc-200 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800 px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+          </div>
+          <button
+            onClick={handleSend}
+            disabled={!from || !to || status === "sending"}
+            className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-semibold transition-colors"
+          >
+            {status === "sending" ? "Sending…" : "Send Email"}
+          </button>
+          {status === "success" && (
+            <p className="text-xs text-green-600 dark:text-green-400 font-medium">Email sent successfully!</p>
+          )}
+          {status === "error" && (
+            <p className="text-xs text-red-500">{errorMsg}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InsightsCard({ lead }: { lead: EnrichedLead }) {
   const [copied, setCopied] = useState(false);
 
@@ -178,21 +259,47 @@ function InsightsCard({ lead }: { lead: EnrichedLead }) {
           {lead.claude?.email && (
             <button
               onClick={handleCopy}
-              className="text-xs px-2.5 py-1 rounded bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 transition-colors"
+              className="text-xs px-2.5 py-1 rounded bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 transition-colors cursor-pointer"
             >
               {copied ? "Copied!" : "Copy"}
             </button>
           )}
         </div>
         {lead.claude?.email ? (
-          <pre className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded p-3">
-            {lead.claude.email}
-          </pre>
+          <>
+            <pre className="text-sm text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded p-3">
+              {lead.claude.email}
+            </pre>
+            <SendEmailPanel defaultTo={lead.email} emailBody={lead.claude.email} />
+          </>
         ) : (
           <p className="text-zinc-400 italic text-sm">No email generated.</p>
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Copy-email button (row-level, for the draft outreach email)
+// ---------------------------------------------------------------------------
+
+function CopyEmailButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }}
+      title="Copy draft outreach email"
+      className="text-xs cursor-pointer px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-500 dark:text-zinc-300 transition-colors shrink-0"
+    >
+      {copied ? "Copied!" : "Copy email"}
+    </button>
   );
 }
 
@@ -676,27 +783,34 @@ export default function Home() {
                     className={`bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden ${rowStyle}`}
                   >
                     {/* Row header */}
-                    <button
-                      onClick={() => setExpandedIndex(isExpanded ? null : i)}
-                      className="w-full text-left px-4 py-3 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
-                    >
-                      <span className="text-xs font-bold text-zinc-400 w-5 shrink-0">
-                        #{i + 1}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold truncate">{lead.name}</p>
-                        <p className="text-xs text-zinc-400 truncate">{lead.company} · {lead.city}, {lead.state}</p>
-                      </div>
-                      <div className="shrink-0">
-                        {loading ? (
-                          <span className="text-xs text-zinc-400 animate-pulse">Enriching…</span>
-                        ) : (
-                          <ScoreBadge tier={lead.scoreTier} score={lead.claude?.score ?? null} />
+                    <div className="flex items-center">
+                      <button
+                        onClick={() => setExpandedIndex(isExpanded ? null : i)}
+                        className="flex-1 min-w-0 text-left px-4 py-3 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                      >
+                        <span className="text-xs font-bold text-zinc-400 w-5 shrink-0">
+                          #{i + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold truncate">{lead.name}</p>
+                          <p className="text-xs text-zinc-400 truncate">{lead.company} · {lead.city}, {lead.state}</p>
+                        </div>
+                        <div className="shrink-0">
+                          {loading ? (
+                            <span className="text-xs text-zinc-400 animate-pulse">Enriching…</span>
+                          ) : (
+                            <ScoreBadge tier={lead.scoreTier} score={lead.claude?.score ?? null} />
+                          )}
+                        </div>
+                        {!loading && lead.claude?.email && (
+                          <div className="pr-3 shrink-0 cursor-pointer">
+                            <CopyEmailButton text={lead.claude.email} />
+                          </div>
                         )}
-                      </div>
-                      <span className="text-zinc-300 text-sm">{isExpanded ? "▲" : "▼"}</span>
-                    </button>
-
+                        <span className="text-zinc-300 text-sm cursor-pointer">{isExpanded ? "▲" : "▼"}</span>
+                      </button>
+                      
+                    </div>
                     {/* Expanded details */}
                     {isExpanded && !loading && (
                       <div className="border-t border-zinc-100 dark:border-zinc-800 px-4 pb-4 pt-3">
