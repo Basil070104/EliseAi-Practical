@@ -319,7 +319,7 @@ function EnrichingSpinner({ label }: { label: string }) {
 
 function LoadingRow({ lead, position }: { lead: LeadInput; position: number }) {
   return (
-    <div className="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden border-l-4 border-indigo-300 animate-pulse">
+    <div className="bg-white dark:bg-zinc-900 rounded-lg border  dark:border-zinc-800 shadow-sm overflow-hidden border-l-4 border-indigo-300 animate-pulse">
       <div className="px-4 py-3 flex items-center gap-4">
         <span className="text-xs font-bold text-zinc-400 w-5 shrink-0">#{position}</span>
         <div className="flex-1 min-w-0 space-y-2">
@@ -337,7 +337,8 @@ function LoadingRow({ lead, position }: { lead: LeadInput; position: number }) {
 // ---------------------------------------------------------------------------
 
 export default function Home() {
-  const [tab, setTab] = useState<"manual" | "csv" | "console">("manual");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [csvOpen, setCsvOpen] = useState(false);
   const [form, setForm] = useState<LeadInput>(EMPTY_FORM);
   const [consoleInput, setConsoleInput] = useState("");
   const [consoleParsing, setConsoleParsing] = useState(false);
@@ -560,6 +561,36 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
+  function handleDownloadConsoleCsv() {
+    if (consoleRows.length === 0) return;
+    const rows = consoleRows.map((r) => ({
+      Name: r.name,
+      Email: r.email,
+      Company: r.company,
+      Address: r.address,
+      City: r.city,
+      State: r.state,
+      Source: r.source,
+      Score: r.enriched?.claude?.score ?? "",
+      Tier: r.enriched?.scoreTier ?? "",
+      RenterRate: r.enriched?.census ? (r.enriched.census.renterRate * 100).toFixed(1) + "%" : "",
+      Population: r.enriched?.census?.population ?? "",
+      MedianIncome: r.enriched?.census?.medianIncome ?? "",
+      WalkScore: r.enriched?.walkScoreData?.walkScore ?? "",
+      TransitScore: r.enriched?.walkScoreData?.transitScore ?? "",
+      BikeScore: r.enriched?.walkScoreData?.bikeScore ?? "",
+      Email_Draft: r.enriched?.claude?.email ?? "",
+    }));
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "console_leads.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const isLoading = loadingIds.size > 0;
   const canManualEnrich =
     !isLoading &&
@@ -685,26 +716,141 @@ export default function Home() {
           <div className="flex-1 min-w-0 space-y-8">
         {/* Input Panel */}
         <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-zinc-200 dark:border-zinc-800">
-            {(["manual", "csv", "console"] as const).map((t) => (
+          {/* Panel header */}
+          <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+            <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">✦ Console</span>
+            <div className="flex items-center gap-2">
               <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`px-5 py-3 text-sm font-medium transition-colors cursor-pointer ${
-                  tab === t
-                    ? "border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400"
-                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                onClick={() => { setManualOpen((o) => !o); setCsvOpen(false); }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  manualOpen
+                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
+                    : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
                 }`}
               >
-                {t === "manual" ? "Manual Entry" : t === "csv" ? "CSV Upload" : "✦ Console"}
+                + Manual Entry
               </button>
-            ))}
+              <button
+                onClick={() => { setCsvOpen((o) => !o); setManualOpen(false); }}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  csvOpen
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
+                    : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                }`}
+              >
+                + CSV Upload
+              </button>
+            </div>
           </div>
 
-          <div className="p-6">
-            {tab === "console" ? (
-              <div className="space-y-4">
+          {/* Manual entry sub-panel */}
+          {manualOpen && (
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-400 mb-3">Manual Entry</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {([
+                  ["name",    "Contact Name",    "Jane Smith"],
+                  ["email",   "Email",           "jane@acmerealty.com"],
+                  ["company", "Company",         "Acme Realty"],
+                  ["address", "Property Address", "123 Main St"],
+                  ["city",    "City",            "San Francisco"],
+                  ["state",   "State",           "CA"],
+                ] as [keyof LeadInput, string, string][]).map(([field, label, placeholder]) => (
+                  <div key={field}>
+                    <label className="block text-xs font-medium text-zinc-500 mb-1">{label}</label>
+                    <input
+                      type={field === "email" ? "email" : "text"}
+                      value={form[field]}
+                      placeholder={placeholder}
+                      onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
+                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  onClick={async () => { await handleManualEnrich(); setManualOpen(false); }}
+                  disabled={!canManualEnrich}
+                  className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                >
+                  {isLoading ? "Enriching…" : "Enrich & Add to Console"}
+                </button>
+                <button
+                  onClick={() => { setForm(EXAMPLE_LEAD); }}
+                  className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
+                >
+                  Try an example →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* CSV upload sub-panel */}
+          {csvOpen && (
+            <div className="px-5 py-4 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400 mb-3">CSV Upload</p>
+              <p className="text-xs text-zinc-500 mb-3">
+                Headers:{" "}
+                <code className="bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">name, email, company, address, city, state</code>
+              </p>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                >
+                  Choose CSV
+                </button>
+                <span className="text-sm text-zinc-400">
+                  {csvFileName ? `${csvFileName} — ${csvLeads.length} lead(s) parsed` : "No file chosen"}
+                </span>
+                <input ref={fileRef} type="file" accept=".csv" onChange={handleCsvFile} className="hidden" />
+              </div>
+              {csvLeads.length > 0 && (
+                <>
+                  <div className="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="bg-zinc-100 dark:bg-zinc-800">
+                        <tr>
+                          {["Name", "Email", "Company", "City", "State"].map((h) => (
+                            <th key={h} className="px-3 py-2 text-left font-medium text-zinc-500">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvLeads.slice(0, 5).map((l, i) => (
+                          <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
+                            <td className="px-3 py-1.5">{l.name}</td>
+                            <td className="px-3 py-1.5 text-zinc-400">{l.email}</td>
+                            <td className="px-3 py-1.5">{l.company}</td>
+                            <td className="px-3 py-1.5">{l.city}</td>
+                            <td className="px-3 py-1.5">{l.state}</td>
+                          </tr>
+                        ))}
+                        {csvLeads.length > 5 && (
+                          <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                            <td colSpan={5} className="px-3 py-1.5 text-zinc-400 italic">+{csvLeads.length - 5} more</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button
+                    onClick={async () => { await handleEnrichAll(); setCsvOpen(false); }}
+                    disabled={!canEnrichAll}
+                    className="mt-3 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                  >
+                    {isLoading
+                      ? `Enriching… (${csvLeads.length - loadingIds.size + 1} / ${csvLeads.length})`
+                      : `Enrich All & Add to Console (${csvLeads.length})`}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          <div className="p-5">
+            <div className="space-y-4">
                 {/* NLP input bar */}
                 <div className="flex gap-2 items-start">
                   <div className="relative flex-1">
@@ -823,146 +969,42 @@ export default function Home() {
                   </table>
                 </div>
 
-                {/* Footer actions */}
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={consoleAddBlankRow}
-                    className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
-                  >
-                    + New Empty Row
-                  </button>
-                  <div className="flex items-center gap-3">
-                    {consoleRows.length > 0 && (
-                      <button
-                        onClick={() => setConsoleRows([])}
-                        className="text-sm text-zinc-400 hover:text-red-500 transition-colors"
-                      >
-                        Clear all
-                      </button>
-                    )}
+              {/* Footer actions */}
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={consoleAddBlankRow}
+                  className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
+                >
+                  + New Empty Row
+                </button>
+                <div className="flex items-center gap-3">
+                  
+                  {consoleRows.length > 0 && (
                     <button
-                      onClick={handleConsoleEnrichAll}
-                      disabled={isLoading || consoleRows.length === 0}
-                      className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                      onClick={() => setConsoleRows([])}
+                      className="text-sm text-zinc-400 hover:text-red-500 transition-colors"
                     >
-                      {isLoading ? `Enriching…` : `Enrich All (${consoleRows.length})`}
+                      Clear all
                     </button>
-                  </div>
+                  )}
+                  {consoleRows.length > 0 && (
+                    <button
+                      onClick={handleDownloadConsoleCsv}
+                      className="text-sm px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                    >
+                      Download
+                    </button>
+                  )}
+                  <button
+                    onClick={handleConsoleEnrichAll}
+                    disabled={isLoading || consoleRows.length === 0}
+                    className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
+                  >
+                    {isLoading ? `Enriching…` : `Enrich All (${consoleRows.length})`}
+                  </button>
                 </div>
               </div>
-            ) : tab === "manual" ? (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {(
-                    [
-                      ["name", "Contact Name", "Jane Smith"],
-                      ["email", "Email", "jane@acmerealty.com"],
-                      ["company", "Company", "Acme Realty"],
-                      ["address", "Property Address", "123 Main St"],
-                      ["city", "City", "San Francisco"],
-                      ["state", "State", "CA"],
-                    ] as [keyof LeadInput, string, string][]
-                  ).map(([field, label, placeholder]) => (
-                    <div key={field}>
-                      <label className="block text-xs font-medium text-zinc-500 mb-1">{label}</label>
-                      <input
-                        type={field === "email" ? "email" : "text"}
-                        value={form[field]}
-                        placeholder={placeholder}
-                        onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
-                        className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
-                      />
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-5 flex items-center gap-4">
-                  <button
-                    onClick={handleManualEnrich}
-                    disabled={!canManualEnrich}
-                    className="px-5 py-2.5 cursor-pointer rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
-                  >
-                    {isLoading ? "Enriching…" : "Enrich Lead"}
-                  </button>
-                  <button
-                    onClick={() => { setForm(EXAMPLE_LEAD); setResults([]); setExpandedIndex(null); }}
-                    className="text-sm cursor-pointer text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 transition-colors"
-                  >
-                    Try an example →
-                  </button>
-                </div>
-              </>
-            ) : tab === "csv" ? (
-              <>
-                <p className="text-sm text-zinc-500 mb-3">
-                  Upload a CSV with headers:{" "}
-                  <code className="text-xs bg-zinc-100 dark:bg-zinc-800 px-1 py-0.5 rounded">
-                    name, email, company, address, city, state
-                  </code>
-                </p>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => fileRef.current?.click()}
-                    className="px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
-                  >
-                    Choose CSV
-                  </button>
-                  <span className="text-sm text-zinc-400">
-                    {csvFileName
-                      ? `${csvFileName} — ${csvLeads.length} lead(s) parsed`
-                      : "No file chosen"}
-                  </span>
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept=".csv"
-                    onChange={handleCsvFile}
-                    className="hidden"
-                  />
-                </div>
-                {csvLeads.length > 0 && (
-                  <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
-                    <table className="w-full text-xs">
-                      <thead className="bg-zinc-100 dark:bg-zinc-800">
-                        <tr>
-                          {["Name", "Email", "Company", "City", "State"].map((h) => (
-                            <th key={h} className="px-3 py-2 text-left font-medium text-zinc-500">
-                              {h}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {csvLeads.slice(0, 5).map((l, i) => (
-                          <tr key={i} className="border-t border-zinc-100 dark:border-zinc-800">
-                            <td className="px-3 py-1.5">{l.name}</td>
-                            <td className="px-3 py-1.5 text-zinc-400">{l.email}</td>
-                            <td className="px-3 py-1.5">{l.company}</td>
-                            <td className="px-3 py-1.5">{l.city}</td>
-                            <td className="px-3 py-1.5">{l.state}</td>
-                          </tr>
-                        ))}
-                        {csvLeads.length > 5 && (
-                          <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                            <td colSpan={5} className="px-3 py-1.5 text-zinc-400 italic">
-                              +{csvLeads.length - 5} more
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                <button
-                  onClick={handleEnrichAll}
-                  disabled={!canEnrichAll}
-                  className="mt-5 px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-sm font-semibold transition-colors"
-                >
-                  {isLoading
-                    ? `Enriching… (${csvLeads.length - loadingIds.size + 1} / ${csvLeads.length})`
-                    : `Enrich All (${csvLeads.length})`}
-                </button>
-              </>
-            ) : null}
+            </div>
           </div>
         </section>
 
@@ -1005,9 +1047,12 @@ export default function Home() {
                   >
                     {/* Row header */}
                     <div className="flex items-center">
-                      <button
+                      <div
                         onClick={() => setExpandedIndex(isExpanded ? null : i)}
-                        className="flex-1 min-w-0 text-left px-4 py-3 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === "Enter" && setExpandedIndex(isExpanded ? null : i)}
+                        className="flex-1 min-w-0 text-left px-4 py-3 flex items-center gap-4 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors cursor-pointer"
                       >
                         <span className="text-xs font-bold text-zinc-400 w-5 shrink-0">
                           #{i + 1}
@@ -1023,14 +1068,13 @@ export default function Home() {
                             <ScoreBadge tier={lead.scoreTier} score={lead.claude?.score ?? null} />
                           )}
                         </div>
-                        {!loading && lead.claude?.email && (
-                          <div className="pr-3 shrink-0 cursor-pointer">
-                            <CopyEmailButton text={lead.claude.email} />
-                          </div>
-                        )}
-                        <span className="text-zinc-300 text-sm cursor-pointer">{isExpanded ? "▲" : "▼"}</span>
-                      </button>
-                      
+                        <span className="text-zinc-300 text-sm">{isExpanded ? "▲" : "▼"}</span>
+                      </div>
+                      {!loading && lead.claude?.email && (
+                        <div className="pr-3 shrink-0">
+                          <CopyEmailButton text={lead.claude.email} />
+                        </div>
+                      )}
                     </div>
                     {/* Expanded details */}
                     {isExpanded && !loading && (
