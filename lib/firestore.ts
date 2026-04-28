@@ -9,11 +9,11 @@ import {
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { getFirebaseDb } from "./firebase";
 import type { EnrichedLead, HistoryEntry } from "./types";
 
 function historyCollectionRef(uid: string) {
-  return collection(db, "users", uid, "history");
+  return collection(getFirebaseDb(), "users", uid, "history");
 }
 
 /** Save a new history entry for the signed-in user. */
@@ -54,7 +54,7 @@ export async function loadHistoryFromFirestore(uid: string): Promise<HistoryEntr
 
 /** Delete a single history entry. */
 export async function deleteHistoryEntry(uid: string, entryId: string): Promise<void> {
-  const ref = doc(db, "users", uid, "history", entryId);
+  const ref = doc(getFirebaseDb(), "users", uid, "history", entryId);
   await deleteDoc(ref);
 }
 
