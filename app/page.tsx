@@ -555,7 +555,36 @@ export default function Home() {
   useEffect(() => {
     if (authLoading) return;
     if (user) {
-      loadHistoryFromFirestore(user.uid).then(setHistory).catch(console.error);
+      loadHistoryFromFirestore(user.uid).then((entries) => {
+        setHistory(entries);
+
+        // Flatten all leads from history into console rows, newest-first,
+        // deduped by email so the same lead only appears once.
+        const seen = new Set<string>();
+        const rows: (LeadInput & {
+          id: string;
+          source: "manual" | "csv" | "console";
+          enriched?: EnrichedLead;
+        })[] = [];
+
+        for (const entry of entries) {
+          for (const lead of entry.leads) {
+            const key = lead.email || `${lead.name}-${lead.address}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            rows.push({
+              ...lead,
+              id: `history-${entry.id}-${key}`,
+              source: "console" as const,
+              enriched: lead,
+            });
+          }
+        }
+
+        if (rows.length > 0) {
+          setConsoleRows(rows);
+        }
+      }).catch(console.error);
     } else {
       // Signed out — fall back to session storage
       setHistory(loadHistory());
