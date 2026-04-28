@@ -60,13 +60,12 @@ Results are sorted by score descending and can be exported as CSV.
 ### Install
 
 ```bash
-cd practical
 npm install
 ```
 
 ### Environment variables
 
-Create `practical/.env.local`:
+Create `.env.local`:
 
 ```env
 # Anthropic
@@ -121,7 +120,6 @@ Rows with invalid emails, unrecognised state abbreviations, missing required fie
 ## Project structure
 
 ```
-practical/
 ├── app/
 │   ├── layout.tsx            # Root layout — wraps app in AuthProvider
 │   ├── page.tsx              # Main UI (console, form, history sidebar)
