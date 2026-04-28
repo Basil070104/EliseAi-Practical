@@ -169,10 +169,94 @@ function InsightsCard({ lead }: { lead: EnrichedLead }) {
     });
   }
 
+  // Compute per-signal score breakdown using the documented rubric
+  const scoreSignals: { label: string; earned: number; max: number; detail: string }[] = [];
+  if (lead.census) {
+    const rr = lead.census.renterRate * 100;
+    const rrPts = rr >= 50 ? 30 : rr >= 40 ? 20 : 10;
+    scoreSignals.push({
+      label: "Renter Rate",
+      earned: rrPts,
+      max: 30,
+      detail: `${rr.toFixed(1)}% renters`,
+    });
+    const pop = lead.census.population;
+    const popPts = pop >= 500_000 ? 20 : pop >= 100_000 ? 12 : 5;
+    scoreSignals.push({
+      label: "City Population",
+      earned: popPts,
+      max: 20,
+      detail: pop.toLocaleString(),
+    });
+    const inc = lead.census.medianIncome;
+    const incPts = inc >= 60_000 && inc <= 120_000 ? 15 : inc > 120_000 ? 10 : 5;
+    scoreSignals.push({
+      label: "Median Income",
+      earned: incPts,
+      max: 15,
+      detail: `$${inc.toLocaleString()}`,
+    });
+  }
+  if (lead.walkScoreData) {
+    const ws = lead.walkScoreData.walkScore ?? 0;
+    const wsPts = ws >= 70 ? 25 : ws >= 50 ? 15 : 5;
+    scoreSignals.push({
+      label: "Walk Score",
+      earned: wsPts,
+      max: 25,
+      detail: `${ws} — ${lead.walkScoreData.walkDescription ?? ""}`,
+    });
+    const ts = lead.walkScoreData.transitScore ?? 0;
+    const tsPts = ts >= 60 ? 10 : ts >= 40 ? 6 : 2;
+    scoreSignals.push({
+      label: "Transit Score",
+      earned: tsPts,
+      max: 10,
+      detail: String(ts),
+    });
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-700">
       {/* Left: data card */}
       <div>
+        {/* Score breakdown */}
+        {scoreSignals.length > 0 && (
+          <div className="mb-5">
+            <h4 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3 uppercase tracking-wide">
+              Score Breakdown
+            </h4>
+            <div className="space-y-2">
+              {scoreSignals.map((sig) => (
+                <div key={sig.label}>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <span className="text-xs text-zinc-500">{sig.label}</span>
+                    <span className="text-xs font-semibold tabular-nums">
+                      <span className={sig.earned === sig.max ? "text-emerald-600 dark:text-emerald-400" : sig.earned >= sig.max * 0.6 ? "text-yellow-600 dark:text-yellow-400" : "text-red-500 dark:text-red-400"}>
+                        {sig.earned}
+                      </span>
+                      <span className="text-zinc-400">/{sig.max}</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${
+                        sig.earned === sig.max
+                          ? "bg-emerald-500"
+                          : sig.earned >= sig.max * 0.6
+                          ? "bg-yellow-400"
+                          : "bg-red-400"
+                      }`}
+                      style={{ width: `${(sig.earned / sig.max) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-0.5">{sig.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <h4 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 mb-3 uppercase tracking-wide">
           Sales Insights
         </h4>
@@ -281,6 +365,82 @@ function InsightsCard({ lead }: { lead: EnrichedLead }) {
 }
 
 // ---------------------------------------------------------------------------
+// Scoring rules modal
+// ---------------------------------------------------------------------------
+
+function ScoringRulesModal({ onClose }: { onClose: () => void }) {
+  const signals = [
+    { signal: "City Renter Rate", max: 30, logic: "≥50% = 30 pts · 40–50% = 20 pts · <40% = 10 pts" },
+    { signal: "Walk Score",       max: 25, logic: "≥70 = 25 pts · 50–69 = 15 pts · <50 = 5 pts" },
+    { signal: "City Population",  max: 20, logic: "≥500k = 20 pts · 100k–499k = 12 pts · <100k = 5 pts" },
+    { signal: "Median HH Income", max: 15, logic: "$60k–$120k = 15 pts (market-rate renter sweet spot)" },
+    { signal: "Transit Score",    max: 10, logic: "≥60 = 10 pts · 40–59 = 6 pts · <40 = 2 pts" },
+  ];
+  const tiers = [
+    { tier: "Hot",  range: "80–100", action: "Route to AE immediately · High-priority outreach", color: "text-red-600 dark:text-red-400" },
+    { tier: "Warm", range: "55–79",  action: "Standard SDR sequence · Monitor",                  color: "text-yellow-600 dark:text-yellow-400" },
+    { tier: "Cold", range: "<55",    action: "Nurture sequence · Deprioritize",                  color: "text-blue-600 dark:text-blue-400" },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="relative bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-700 shadow-2xl w-full max-w-lg overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
+          <div>
+            <h2 className="text-sm font-semibold">Scoring Rubric</h2>
+            <p className="text-xs text-zinc-400 mt-0.5">ICP: Multifamily residential property managers, 50+ units, mid-to-large U.S. metro</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">✕</button>
+        </div>
+        <div className="px-5 py-4 space-y-5">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">Signal Weights</h3>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-zinc-400 border-b border-zinc-100 dark:border-zinc-800">
+                  <th className="text-left pb-2 font-medium">Signal</th>
+                  <th className="text-center pb-2 font-medium w-16">Max pts</th>
+                  <th className="text-left pb-2 font-medium pl-3">Logic</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-50 dark:divide-zinc-800">
+                {signals.map((s) => (
+                  <tr key={s.signal}>
+                    <td className="py-2 font-medium text-zinc-700 dark:text-zinc-300">{s.signal}</td>
+                    <td className="py-2 text-center font-semibold text-indigo-600 dark:text-indigo-400">{s.max}</td>
+                    <td className="py-2 pl-3 text-xs text-zinc-500">{s.logic}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-zinc-200 dark:border-zinc-700">
+                  <td className="pt-2 font-semibold">Total</td>
+                  <td className="pt-2 text-center font-bold text-indigo-600 dark:text-indigo-400">100</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 mb-2">Score Tiers &amp; Actions</h3>
+            <div className="space-y-2">
+              {tiers.map((t) => (
+                <div key={t.tier} className="flex items-start gap-3">
+                  <span className={`text-xs font-bold w-12 shrink-0 mt-0.5 ${t.color}`}>{t.tier}</span>
+                  <span className="text-xs text-zinc-400 w-16 shrink-0">{t.range}</span>
+                  <span className="text-xs text-zinc-600 dark:text-zinc-400">{t.action}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-zinc-400 border-t border-zinc-100 dark:border-zinc-800 pt-3">
+            Data sources: U.S. Census Bureau ACS 5-Year · WalkScore API · Claude (Anthropic) for synthesis
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Copy-email button (row-level, for the draft outreach email)
 // ---------------------------------------------------------------------------
 
@@ -339,6 +499,7 @@ function LoadingRow({ lead, position }: { lead: LeadInput; position: number }) {
 export default function Home() {
   const [manualOpen, setManualOpen] = useState(false);
   const [csvOpen, setCsvOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const [form, setForm] = useState<LeadInput>(EMPTY_FORM);
   const [consoleInput, setConsoleInput] = useState("");
   const [consoleParsing, setConsoleParsing] = useState(false);
@@ -485,6 +646,20 @@ export default function Home() {
     }
   }
 
+  async function handleConsoleEnrichRow(rowId: string) {
+    const row = consoleRows.find((r) => r.id === rowId);
+    if (!row) return;
+    const idx = consoleRows.findIndex((r) => r.id === rowId);
+    const result = await enrichLead(row, idx);
+    setConsoleRows((prev) => prev.map((r) => r.id === rowId ? { ...r, enriched: result } : r));
+    setResults((prev) => {
+      const next = [...prev.filter((r) => r.email !== row.email), result];
+      return next.sort((a, b) => (b.claude?.score ?? -1) - (a.claude?.score ?? -1));
+    });
+    const entry = saveHistoryEntry(sessionId, [result], result.name || row.name || "1 lead");
+    setHistory((prev) => [entry, ...prev]);
+  }
+
   async function handleConsoleEnrichAll() {
     if (consoleRows.length === 0) return;
     setResults([]);
@@ -604,6 +779,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100">
+      {rulesOpen && <ScoringRulesModal onClose={() => setRulesOpen(false)} />}
       {/* Header */}
       <header className="border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-6 py-4">
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between">
@@ -625,13 +801,13 @@ export default function Home() {
             >
               {isDark ? (
                 // Sun icon
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 cursor-pointer text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <circle cx="12" cy="12" r="5" />
                   <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
                 </svg>
               ) : (
                 // Moon icon
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 cursor-pointer text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
                 </svg>
               )}
@@ -644,7 +820,7 @@ export default function Home() {
         <div className="flex gap-6 items-start">
 
           {/* Left sidebar — session history */}
-          <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-4 self-start bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+          <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-4 self-start h-[calc(100vh-2rem)] bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100 dark:border-zinc-800">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
                 Session History
@@ -660,7 +836,7 @@ export default function Home() {
               </div>
             ) : (
               <>
-                <div className="divide-y divide-zinc-100 dark:divide-zinc-800 overflow-y-auto max-h-[calc(100vh-12rem)]">
+                <div className="divide-y divide-zinc-100 dark:divide-zinc-800 overflow-y-auto flex-1 min-h-0">
                   {history.map((entry) => {
                     const hot = entry.leads.filter((l) => l.scoreTier === "Hot").length;
                     const warm = entry.leads.filter((l) => l.scoreTier === "Warm").length;
@@ -718,11 +894,20 @@ export default function Home() {
         <section className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
           {/* Panel header */}
           <div className="px-5 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-            <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">✦ Console</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">✦ Console</span>
+              <button
+                onClick={() => setRulesOpen(true)}
+                title="How scoring works"
+                className="text-zinc-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors text-xs leading-none"
+              >
+                ⓘ
+              </button>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => { setManualOpen((o) => !o); setCsvOpen(false); }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`px-3 py-1 cursor-pointer rounded-md text-xs font-medium transition-colors ${
                   manualOpen
                     ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300"
                     : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
@@ -732,7 +917,7 @@ export default function Home() {
               </button>
               <button
                 onClick={() => { setCsvOpen((o) => !o); setManualOpen(false); }}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                className={`px-3 py-1 cursor-pointer rounded-md text-xs font-medium transition-colors ${
                   csvOpen
                     ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300"
                     : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
@@ -851,6 +1036,50 @@ export default function Home() {
 
           <div className="p-5">
             <div className="space-y-4">
+                {/* Score summary bar */}
+                {consoleRows.length > 0 && (() => {
+                  const enriched = consoleRows.filter((r) => r.enriched && !r.enriched.error);
+                  const hot  = enriched.filter((r) => r.enriched!.scoreTier === "Hot").length;
+                  const warm = enriched.filter((r) => r.enriched!.scoreTier === "Warm").length;
+                  const cold = enriched.filter((r) => r.enriched!.scoreTier === "Cold").length;
+                  const pending = consoleRows.length - enriched.length;
+                  const avgScore = enriched.length
+                    ? Math.round(enriched.reduce((s, r) => s + (r.enriched!.claude?.score ?? 0), 0) / enriched.length)
+                    : null;
+                  return (
+                    <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-700 flex-wrap">
+                      <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wide shrink-0">Summary</span>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {hot > 0 && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-800">
+                            🔥 {hot} Hot
+                          </span>
+                        )}
+                        {warm > 0 && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200 dark:bg-yellow-900/30 dark:text-yellow-300 dark:border-yellow-800">
+                            ☀︎ {warm} Warm
+                          </span>
+                        )}
+                        {cold > 0 && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800">
+                            ❄︎ {cold} Cold
+                          </span>
+                        )}
+                        {pending > 0 && (
+                          <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500 border border-zinc-200 dark:bg-zinc-700 dark:text-zinc-400 dark:border-zinc-600">
+                            ○ {pending} Pending
+                          </span>
+                        )}
+                      </div>
+                      {avgScore !== null && (
+                        <span className="ml-auto text-xs text-zinc-400 shrink-0">
+                          Avg score <span className="font-semibold text-zinc-600 dark:text-zinc-300">{avgScore}/100</span>
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* NLP input bar */}
                 <div className="flex gap-2 items-start">
                   <div className="relative flex-1">
@@ -938,7 +1167,14 @@ export default function Home() {
                                     <span className="ml-1">{isExpanded ? "▲" : "▼"}</span>
                                   </button>
                                 ) : (
-                                  <span className="text-xs text-zinc-400 italic">Not enriched</span>
+                                  <button
+                                    onClick={() => handleConsoleEnrichRow(row.id)}
+                                    disabled={isLoading}
+                                    className="inline-flex items-center gap-1 text-xs font-medium text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 disabled:opacity-40 transition-colors"
+                                    title="Enrich this row"
+                                  >
+                                    <span>⚡</span> Enrich
+                                  </button>
                                 )}
                               </td>
                               <td className="px-2 py-1 text-center">
