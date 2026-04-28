@@ -11,6 +11,17 @@ function scoreTier(score: number): ScoreTier {
   return "Cold";
 }
 
+const US_STATE_ABBREVS = new Set([
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY","DC","PR","GU","VI","AS","MP",
+]);
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
 export async function POST(request: NextRequest): Promise<NextResponse> {
   let body: LeadInput;
   try {
@@ -24,6 +35,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!name || !email || !company || !address || !city || !state) {
     return NextResponse.json(
       { error: "Missing required fields: name, email, company, address, city, state" },
+      { status: 400 }
+    );
+  }
+
+  if (!isValidEmail(email)) {
+    return NextResponse.json({ error: "Invalid email address format" }, { status: 400 });
+  }
+
+  if (!US_STATE_ABBREVS.has(state.trim().toUpperCase())) {
+    return NextResponse.json(
+      { error: `Invalid state "${state}". Use a 2-letter US state abbreviation (e.g. CA).` },
       { status: 400 }
     );
   }

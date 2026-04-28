@@ -23,6 +23,35 @@ import {
 // Types & helpers
 // ---------------------------------------------------------------------------
 
+const US_STATE_ABBREVS = new Set([
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY","DC","PR","GU","VI","AS","MP",
+]);
+
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+function isValidState(state: string): boolean {
+  return US_STATE_ABBREVS.has(state.trim().toUpperCase());
+}
+
+/** Returns a map of field → error message, or empty object if all valid. */
+function validateLead(lead: LeadInput): Partial<Record<keyof LeadInput, string>> {
+  const errors: Partial<Record<keyof LeadInput, string>> = {};
+  if (!lead.name.trim())    errors.name    = "Name is required";
+  if (!lead.email.trim())   errors.email   = "Email is required";
+  else if (!isValidEmail(lead.email)) errors.email = "Enter a valid email address";
+  if (!lead.company.trim()) errors.company = "Company is required";
+  if (!lead.address.trim()) errors.address = "Address is required";
+  if (!lead.city.trim())    errors.city    = "City is required";
+  if (!lead.state.trim())   errors.state   = "State is required";
+  else if (!isValidState(lead.state)) errors.state = "Use a 2-letter state abbreviation (e.g. CA)";
+  return errors;
+}
+
 const TIER_STYLES: Record<ScoreTier, { badge: string; row: string }> = {
   Hot: {
     badge: "bg-red-100 text-red-700 border border-red-300",
@@ -510,6 +539,7 @@ export default function Home() {
   const [csvOpen, setCsvOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [form, setForm] = useState<LeadInput>(EMPTY_FORM);
+  const [formErrors, setFormErrors] = useState<Partial<Record<keyof LeadInput, string>>>({});
   const [consoleInput, setConsoleInput] = useState("");
   const [consoleParsing, setConsoleParsing] = useState(false);
   const [consoleError, setConsoleError] = useState("");
@@ -518,6 +548,7 @@ export default function Home() {
   const consoleRef = useRef<HTMLTextAreaElement>(null);
   const [csvLeads, setCsvLeads] = useState<LeadInput[]>([]);
   const [csvFileName, setCsvFileName] = useState<string>("");
+  const [csvParseWarning, setCsvParseWarning] = useState<string>("");
   const [results, setResults] = useState<EnrichedLead[]>([]);
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
@@ -633,6 +664,12 @@ export default function Home() {
   }
 
   async function handleManualEnrich() {
+    const errors = validateLead(form);
+    if (Object.keys(errors).length > 0) {
+      setFormErrors(errors);
+      return;
+    }
+    setFormErrors({});
     const idx = 0;
     setResults([]);
     setExpandedIndex(null);
@@ -718,6 +755,18 @@ export default function Home() {
   async function handleConsoleEnrichRow(rowId: string) {
     const row = consoleRows.find((r) => r.id === rowId);
     if (!row) return;
+    const errors = validateLead(row);
+    if (Object.keys(errors).length > 0) {
+      const msg = Object.values(errors).join(" · ");
+      setConsoleRows((prev) =>
+        prev.map((r) =>
+          r.id === rowId
+            ? { ...r, enriched: { ...r, geo: null, census: null, walkScoreData: null, claude: null, scoreTier: null, error: msg } }
+            : r
+        )
+      );
+      return;
+    }
     const idx = consoleRows.findIndex((r) => r.id === rowId);
     const result = await enrichLead(row, idx);
     setConsoleRows((prev) => prev.map((r) => r.id === rowId ? { ...r, enriched: result } : r));
@@ -753,21 +802,77 @@ export default function Home() {
   function handleCsvFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // File type guard
+    if (!file.name.toLowerCase().endsWith(".csv") && file.type !== "text/csv") {
+      setCsvParseWarning("Please upload a .csv file.");
+      setCsvFileName("");
+      setCsvLeads([]);
+      e.target.value = "";
+      return;
+    }
+
     setCsvFileName(file.name);
+    setCsvParseWarning("");
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (h) => h.trim().toLowerCase(),
       complete: (result) => {
+        // Surface PapaParse errors
+        if (result.errors.length > 0) {
+          const sample = result.errors.slice(0, 3).map((er) => er.message).join("; ");
+          setCsvParseWarning(`Parse issues detected: ${sample}`);
+        }
+
+        // Check for missing required columns
+        const firstRow = result.data[0];
+        const requiredCols = ["name", "email", "city", "state"];
+        const missingCols = firstRow
+          ? requiredCols.filter((c) => !(c in firstRow))
+          : requiredCols;
+        if (missingCols.length > 0) {
+          setCsvParseWarning(
+            `Missing required columns: ${missingCols.join(", ")}. Expected: name, email, company, address, city, state`
+          );
+          setCsvLeads([]);
+          return;
+        }
+
         const leads: LeadInput[] = result.data.map((row) => ({
-          name: row["name"] ?? "",
-          email: row["email"] ?? "",
+          name:    row["name"]    ?? "",
+          email:   row["email"]   ?? "",
           company: row["company"] ?? "",
           address: row["address"] ?? "",
-          city: row["city"] ?? "",
-          state: row["state"] ?? "",
+          city:    row["city"]    ?? "",
+          state:   row["state"]   ?? "",
         }));
-        setCsvLeads(leads.filter((l) => l.name && l.email && l.city && l.state));
+
+        // Filter rows that are missing required fields
+        const validLeads = leads.filter((l) => l.name && l.email && l.city && l.state);
+        const skipped = leads.length - validLeads.length;
+
+        // Warn about invalid emails and bad state abbreviations
+        const badEmail  = validLeads.filter((l) => !isValidEmail(l.email));
+        const badState  = validLeads.filter((l) => !isValidState(l.state));
+        // Dedup by email — keep the first occurrence
+        const seen = new Set<string>();
+        const deduped = validLeads.filter((l) => {
+          if (seen.has(l.email.toLowerCase())) return false;
+          seen.add(l.email.toLowerCase());
+          return true;
+        });
+        const dupes = validLeads.length - deduped.length;
+
+        const warnings: string[] = [];
+        if (skipped > 0)        warnings.push(`${skipped} row(s) skipped (missing required fields)`);
+        if (badEmail.length > 0) warnings.push(`${badEmail.length} row(s) have invalid email format`);
+        if (badState.length > 0) warnings.push(`${badState.length} row(s) have invalid state (use 2-letter abbrev)`);
+        if (dupes > 0)           warnings.push(`${dupes} duplicate email(s) removed`);
+        if (warnings.length > 0) setCsvParseWarning(warnings.join(" · "));
+
+        // Only enrich rows that fully pass validation
+        setCsvLeads(deduped.filter((l) => isValidEmail(l.email) && isValidState(l.state)));
       },
     });
   }
@@ -838,10 +943,12 @@ export default function Home() {
     !isLoading &&
     form.name &&
     form.email &&
+    isValidEmail(form.email) &&
     form.company &&
     form.address &&
     form.city &&
-    form.state;
+    form.state &&
+    isValidState(form.state);
   const canEnrichAll = !isLoading && csvLeads.length > 0;
 
   // Show spinner while auth resolves or while redirecting to /signin
@@ -1059,9 +1166,19 @@ export default function Home() {
                       type={field === "email" ? "email" : "text"}
                       value={form[field]}
                       placeholder={placeholder}
-                      onChange={(e) => setForm((f) => ({ ...f, [field]: e.target.value }))}
-                      className="w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                      onChange={(e) => {
+                        setForm((f) => ({ ...f, [field]: e.target.value }));
+                        if (formErrors[field]) setFormErrors((prev) => { const n = { ...prev }; delete n[field]; return n; });
+                      }}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:bg-zinc-800 ${
+                        formErrors[field]
+                          ? "border-red-400 dark:border-red-500 bg-red-50 dark:bg-red-900/20"
+                          : "border-zinc-200 dark:border-zinc-700 bg-white"
+                      }`}
                     />
+                    {formErrors[field] && (
+                      <p className="mt-1 text-xs text-red-500">{formErrors[field]}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1074,7 +1191,7 @@ export default function Home() {
                   {isLoading ? "Enriching…" : "Enrich & Add to Console"}
                 </button>
                 <button
-                  onClick={() => { setForm(EXAMPLE_LEAD); }}
+                  onClick={() => { setForm(EXAMPLE_LEAD); setFormErrors({}); }}
                   className="text-sm text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 transition-colors"
                 >
                   Try an example →
@@ -1099,10 +1216,15 @@ export default function Home() {
                   Choose CSV
                 </button>
                 <span className="text-sm text-zinc-400">
-                  {csvFileName ? `${csvFileName} — ${csvLeads.length} lead(s) parsed` : "No file chosen"}
+                  {csvFileName ? `${csvFileName} — ${csvLeads.length} lead(s) ready` : "No file chosen"}
                 </span>
                 <input ref={fileRef} type="file" accept=".csv" onChange={handleCsvFile} className="hidden" />
               </div>
+              {csvParseWarning && (
+                <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg px-3 py-2">
+                  ⚠ {csvParseWarning}
+                </p>
+              )}
               {csvLeads.length > 0 && (
                 <>
                   <div className="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
